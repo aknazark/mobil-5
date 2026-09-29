@@ -1,0 +1,403 @@
+name: NavigationComposeApp APK құрастыру
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Android жобасын жасау
+        run: |
+          set -e
+          mkdir -p app/src/main/java/com/example/navigationcomposeapp
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "NavigationComposeApp"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.6.1" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.20" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "com.example.navigationcomposeapp"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.example.navigationcomposeapp"
+                  minSdk = 24
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              buildFeatures { compose = true }
+          }
+
+          kotlin { jvmToolchain(17) }
+
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.09.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.activity:activity-compose:1.9.2")
+              implementation("androidx.navigation:navigation-compose:2.8.0")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.6")
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application
+                  android:label="NavigationComposeApp"
+                  android:theme="@style/AppTheme">
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                      <intent-filter>
+                          <action android:name="android.intent.action.VIEW" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                          <category android:name="android.intent.category.BROWSABLE" />
+                          <data android:scheme="myapp" android:host="product" />
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar" />
+          </resources>
+          EOF
+
+          cat > app/src/main/java/com/example/navigationcomposeapp/MainActivity.kt <<'EOF'
+          package com.example.navigationcomposeapp
+
+          import android.net.Uri
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.runtime.saveable.rememberSaveable
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.unit.dp
+          import androidx.navigation.NavType
+          import androidx.navigation.compose.NavHost
+          import androidx.navigation.compose.composable
+          import androidx.navigation.compose.currentBackStackEntryAsState
+          import androidx.navigation.compose.rememberNavController
+          import androidx.navigation.navArgument
+          import androidx.navigation.navDeepLink
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      MaterialTheme {
+                          MainNav()
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun MainNav() {
+              val navController = rememberNavController()
+              val snackbar = remember { SnackbarHostState() }
+              val scope = rememberCoroutineScope()
+
+              Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { outerPadding ->
+                  NavHost(
+                      navController = navController,
+                      startDestination = "list",
+                      modifier = Modifier.padding(outerPadding)
+                  ) {
+                      composable("list") {
+                          val entry by navController.currentBackStackEntryAsState()
+                          val result by entry?.savedStateHandle
+                              ?.getStateFlow("edited_text", "")
+                              ?.collectAsState() ?: remember { mutableStateOf("") }
+
+                          LaunchedEffect(result) {
+                              if (result.isNotBlank()) {
+                                  snackbar.showSnackbar("Редактордан нәтиже: $result")
+                                  entry?.savedStateHandle?.set("edited_text", "")
+                              }
+                          }
+
+                          ListScreen(
+                              lastResult = result,
+                              onDetails = { id, title ->
+                                  navController.navigate(
+                                      "details/$id?title=${Uri.encode(title)}"
+                                  )
+                              },
+                              onEdit = { navController.navigate("edit") }
+                          )
+                      }
+
+                      composable(
+                          route = "details/{id}?title={title}",
+                          arguments = listOf(
+                              navArgument("id") { type = NavType.LongType },
+                              navArgument("title") {
+                                  type = NavType.StringType
+                                  nullable = true
+                                  defaultValue = null
+                              }
+                          ),
+                          deepLinks = listOf(
+                              navDeepLink { uriPattern = "myapp://product/{id}" }
+                          )
+                      ) { backStackEntry ->
+                          val id = backStackEntry.arguments?.getLong("id") ?: -1L
+                          val title = backStackEntry.arguments?.getString("title")
+                          DetailsScreen(
+                              id = id,
+                              title = title,
+                              onBack = { navController.popBackStack() }
+                          )
+                      }
+
+                      composable("edit") {
+                          EditScreen(
+                              onDone = { text ->
+                                  navController.previousBackStackEntry
+                                      ?.savedStateHandle
+                                      ?.set("edited_text", text)
+                                  navController.popBackStack()
+                              },
+                              onCancel = { navController.popBackStack() }
+                          )
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun ListScreen(
+              lastResult: String,
+              onDetails: (Long, String) -> Unit,
+              onEdit: () -> Unit
+          ) {
+              val list = remember {
+                  (1..10).map { it.toLong() to "Элемент #$it" }
+              }
+
+              Column(
+                  Modifier
+                      .fillMaxSize()
+                      .padding(16.dp)
+              ) {
+                  Text(
+                      "Навигация мысалы",
+                      style = MaterialTheme.typography.headlineSmall
+                  )
+                  Spacer(Modifier.height(8.dp))
+
+                  Text("Тізім экраны")
+                  Spacer(Modifier.height(12.dp))
+
+                  Button(
+                      onClick = onEdit,
+                      modifier = Modifier.fillMaxWidth()
+                  ) {
+                      Text("Редакторды ашу")
+                  }
+
+                  if (lastResult.isNotBlank()) {
+                      Spacer(Modifier.height(8.dp))
+                      Text("Соңғы нәтиже: $lastResult")
+                  }
+
+                  Spacer(Modifier.height(16.dp))
+
+                  LazyColumn(
+                      verticalArrangement = Arrangement.spacedBy(8.dp)
+                  ) {
+                      items(list, key = { it.first }) { (id, title) ->
+                          ElevatedCard(
+                              onClick = { onDetails(id, title) },
+                              modifier = Modifier.fillMaxWidth()
+                          ) {
+                              Column(Modifier.padding(14.dp)) {
+                                  Text(
+                                      title.replace("Элемент", "Элемент"),
+                                      style = MaterialTheme.typography.titleMedium
+                                  )
+                                  Text("ID = $id")
+                                  Text("Толық ақпаратты ашу")
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun DetailsScreen(
+              id: Long,
+              title: String?,
+              onBack: () -> Unit
+          ) {
+              Scaffold(
+                  topBar = {
+                      TopAppBar(
+                          title = { Text(title ?: "Элемент мәліметтері") },
+                          navigationIcon = {
+                              TextButton(onClick = onBack) {
+                                  Text("Артқа")
+                              }
+                          }
+                      )
+                  }
+              ) { inner ->
+                  Column(
+                      Modifier
+                          .padding(inner)
+                          .padding(16.dp),
+                      verticalArrangement = Arrangement.spacedBy(12.dp)
+                  ) {
+                      Text(
+                          "Мәліметтер экраны",
+                          style = MaterialTheme.typography.headlineSmall
+                      )
+                      Text(
+                          "Элемент ID: $id",
+                          style = MaterialTheme.typography.titleLarge
+                      )
+                      Text("Атауы: ${title ?: "Атауы жоқ"}")
+
+                      HorizontalDivider()
+
+                      Text("Deep-link:")
+                      Text("myapp://product/$id")
+                      Text(
+                          "Бұл сілтеме қолданбаны бірден осы элементтің мәліметтер экранында аша алады."
+                      )
+
+                      Button(
+                          onClick = onBack,
+                          modifier = Modifier.fillMaxWidth()
+                      ) {
+                          Text("Тізімге оралу")
+                      }
+                  }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun EditScreen(
+              onDone: (String) -> Unit,
+              onCancel: () -> Unit
+          ) {
+              var text by rememberSaveable { mutableStateOf("") }
+
+              Scaffold(
+                  topBar = {
+                      TopAppBar(title = { Text("Редактор") })
+                  }
+              ) { inner ->
+                  Column(
+                      Modifier
+                          .padding(inner)
+                          .padding(16.dp),
+                      verticalArrangement = Arrangement.spacedBy(12.dp)
+                  ) {
+                      Text(
+                          "Деректерді өңдеу",
+                          style = MaterialTheme.typography.headlineSmall
+                      )
+
+                      OutlinedTextField(
+                          value = text,
+                          onValueChange = { text = it },
+                          label = { Text("Жаңа атауды енгізіңіз") },
+                          singleLine = true,
+                          modifier = Modifier.fillMaxWidth()
+                      )
+
+                      Button(
+                          onClick = { onDone(text) },
+                          enabled = text.isNotBlank(),
+                          modifier = Modifier.fillMaxWidth()
+                      ) {
+                          Text("Сақтау")
+                      }
+
+                      OutlinedButton(
+                          onClick = onCancel,
+                          modifier = Modifier.fillMaxWidth()
+                      ) {
+                          Text("Бас тарту")
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: APK құрастыру
+        run: gradle assembleDebug --stacktrace
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NavigationComposeApp-KZ-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
